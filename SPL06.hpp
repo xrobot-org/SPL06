@@ -2,26 +2,22 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: SPL06 barometer driver module
+module_description: XRobot Module for Goertek SPL06 barometric pressure sensor
 constructor_args:
   - data_topic_name: "spl06_data"
   - sample_period_ms: 50
   - task_stack_depth: 1024
 template_args: []
 required_hardware:
-  - spi_spl06/spi2/SPI2
-  - spl06_cs
-  - spi2_mutex
+  - spl06_spi
   - ramfs
 depends: []
 === END MANIFEST === */
 // clang-format on
 
 #include "app_framework.hpp"
-#include "gpio.hpp"
 #include "logger.hpp"
 #include "message.hpp"
-#include "mutex.hpp"
 #include "ramfs.hpp"
 #include "spi.hpp"
 #include "thread.hpp"
@@ -53,32 +49,12 @@ class SPL06 : public LibXR::Application {
     int16_t c30 = 0;
   };
 
-  class OptionalBusLock {
-   public:
-    explicit OptionalBusLock(LibXR::Mutex* mutex) : mutex_(mutex) {
-      if (mutex_ != nullptr) {
-        mutex_->Lock();
-      }
-    }
-
-    ~OptionalBusLock() {
-      if (mutex_ != nullptr) {
-        mutex_->Unlock();
-      }
-    }
-
-   private:
-    LibXR::Mutex* mutex_;
-  };
-
   SPL06(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
         const char* data_topic_name, uint32_t sample_period_ms,
         size_t task_stack_depth)
       : sample_period_ms_(sample_period_ms),
         topic_(LibXR::Topic::CreateTopic<Data>(data_topic_name)),
-        cs_(hw.template FindOrExit<LibXR::GPIO>({"spl06_cs"})),
-        spi_(hw.template FindOrExit<LibXR::SPI>({"spi_spl06", "spi2", "SPI2"})),
-        spi_mutex_(hw.template Find<LibXR::Mutex>({"spi2_mutex"})),
+        spi_(hw.template FindOrExit<LibXR::SPI>({"spl06_spi"})),
         op_spi_(sem_spi_),
         cmd_file_(LibXR::RamFS::CreateFile("spl06", CommandFunc, this)) {
     app.Register(*this);
@@ -88,10 +64,6 @@ class SPL06 : public LibXR::Application {
                             .clock_phase = LibXR::SPI::ClockPhase::EDGE_2,
                             .prescaler = LibXR::SPI::Prescaler::DIV_4}) ==
            LibXR::ErrorCode::OK);
-
-    cs_->SetConfig({.direction = LibXR::GPIO::Direction::OUTPUT_PUSH_PULL,
-                    .pull = LibXR::GPIO::Pull::NONE});
-    cs_->Write(true);
 
     chip_id_ = ReadReg(REG_PRODUCT_ID);
     ASSERT(chip_id_ == 0x10);
@@ -124,26 +96,17 @@ class SPL06 : public LibXR::Application {
   static constexpr uint8_t REG_PRODUCT_ID = 0x0D;
 
   void WriteReg(uint8_t reg, uint8_t value) {
-    OptionalBusLock lock(spi_mutex_);
-    cs_->Write(false);
     spi_->MemWrite(reg, value, op_spi_);
-    cs_->Write(true);
   }
 
   uint8_t ReadReg(uint8_t reg) {
-    OptionalBusLock lock(spi_mutex_);
     uint8_t value = 0;
-    cs_->Write(false);
     spi_->MemRead(reg, {&value, 1}, op_spi_);
-    cs_->Write(true);
     return value;
   }
 
   void ReadRegs(uint8_t reg, uint8_t* data, size_t size) {
-    OptionalBusLock lock(spi_mutex_);
-    cs_->Write(false);
     spi_->MemRead(reg, {data, size}, op_spi_);
-    cs_->Write(true);
   }
 
   static int32_t SignExtend12(uint32_t value) {
@@ -355,9 +318,7 @@ class SPL06 : public LibXR::Application {
   Calibration calibration_;
   Data data_;
   LibXR::Topic topic_;
-  LibXR::GPIO* cs_;
   LibXR::SPI* spi_;
-  LibXR::Mutex* spi_mutex_ = nullptr;
   LibXR::Semaphore sem_spi_;
   LibXR::SPI::OperationRW op_spi_;
   LibXR::RamFS::File cmd_file_;
