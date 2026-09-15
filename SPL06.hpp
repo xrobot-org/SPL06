@@ -3,19 +3,18 @@
 // clang-format off
 /* === MODULE MANIFEST V2 ===
 module_description: XRobot Module for Goertek SPL06 barometric pressure sensor
-constructor_args:
-  - data_topic_name: "spl06_data"
-  - sample_period_ms: 50
-  - task_stack_depth: 1024
-template_args: []
-required_hardware:
-  - spl06_spi
-  - ramfs
 depends: []
 === END MANIFEST === */
 // clang-format on
 
-#include "app_framework.hpp"
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+
+#include "libxr_def.hpp"
 #include "logger.hpp"
 #include "message.hpp"
 #include "ramfs.hpp"
@@ -23,21 +22,18 @@ depends: []
 #include "thread.hpp"
 #include "timebase.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-
-class SPL06 : public LibXR::Application {
+class SPL06
+{
  public:
-  struct Data {
+  struct Data
+  {
     float temperature_c = 0.0f;
     float pressure_pa = 0.0f;
     float height_cm = 0.0f;
   };
 
-  struct Calibration {
+  struct Calibration
+  {
     int16_t c0 = 0;
     int16_t c1 = 0;
     int32_t c00 = 0;
@@ -49,16 +45,15 @@ class SPL06 : public LibXR::Application {
     int16_t c30 = 0;
   };
 
-  SPL06(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-        const char* data_topic_name, uint32_t sample_period_ms,
-        size_t task_stack_depth)
+  SPL06(LibXR::SPI& external_spl06_spi, LibXR::RamFS& external_ramfs,
+        const char* data_topic_name, uint32_t sample_period_ms, size_t task_stack_depth)
       : sample_period_ms_(sample_period_ms),
         topic_(LibXR::Topic::CreateTopic<Data>(data_topic_name)),
-        spi_(hw.template FindOrExit<LibXR::SPI>({"spl06_spi"})),
+        spi_(std::addressof(external_spl06_spi)),
         op_spi_(sem_spi_),
-        cmd_file_(LibXR::RamFS::CreateFile("spl06", CommandFunc, this)) {
-    app.Register(*this);
-    hw.template FindOrExit<LibXR::RamFS>({"ramfs"})->Add(cmd_file_);
+        cmd_file_(LibXR::RamFS::CreateFile("spl06", CommandFunc, this))
+  {
+    external_ramfs.Add(cmd_file_);
 
     ASSERT(spi_->SetConfig({.clock_polarity = LibXR::SPI::ClockPolarity::HIGH,
                             .clock_phase = LibXR::SPI::ClockPhase::EDGE_2,
@@ -79,9 +74,11 @@ class SPL06 : public LibXR::Application {
                    LibXR::Thread::Priority::HIGH);
   }
 
-  void OnMonitor() override {
+  void OnMonitor()
+  {
     if (std::isnan(data_.pressure_pa) || std::isnan(data_.temperature_c) ||
-        std::isnan(data_.height_cm)) {
+        std::isnan(data_.height_cm))
+    {
       XR_LOG_WARN("SPL06: NaN data detected.");
     }
   }
@@ -95,46 +92,50 @@ class SPL06 : public LibXR::Application {
   static constexpr uint8_t REG_CFG_REG = 0x09;
   static constexpr uint8_t REG_PRODUCT_ID = 0x0D;
 
-  void WriteReg(uint8_t reg, uint8_t value) {
-    spi_->MemWrite(reg, value, op_spi_);
-  }
+  void WriteReg(uint8_t reg, uint8_t value) { spi_->MemWrite(reg, value, op_spi_); }
 
-  uint8_t ReadReg(uint8_t reg) {
+  uint8_t ReadReg(uint8_t reg)
+  {
     uint8_t value = 0;
     spi_->MemRead(reg, {&value, 1}, op_spi_);
     return value;
   }
 
-  void ReadRegs(uint8_t reg, uint8_t* data, size_t size) {
+  void ReadRegs(uint8_t reg, uint8_t* data, size_t size)
+  {
     spi_->MemRead(reg, {data, size}, op_spi_);
   }
 
-  static int32_t SignExtend12(uint32_t value) {
+  static int32_t SignExtend12(uint32_t value)
+  {
     return (value & 0x800) ? static_cast<int32_t>(value | 0xFFFFF000u)
                            : static_cast<int32_t>(value);
   }
 
-  static int32_t SignExtend20(uint32_t value) {
+  static int32_t SignExtend20(uint32_t value)
+  {
     return (value & 0x80000) ? static_cast<int32_t>(value | 0xFFF00000u)
                              : static_cast<int32_t>(value);
   }
 
-  static int32_t SignExtend24(uint32_t value) {
+  static int32_t SignExtend24(uint32_t value)
+  {
     return (value & 0x800000) ? static_cast<int32_t>(value | 0xFF000000u)
                               : static_cast<int32_t>(value);
   }
 
-  void ReadCalibration() {
+  void ReadCalibration()
+  {
     calibration_.c0 =
         SignExtend12((static_cast<uint32_t>(ReadReg(0x10)) << 4) | (ReadReg(0x11) >> 4));
-    calibration_.c1 = SignExtend12(
-        ((static_cast<uint32_t>(ReadReg(0x11)) & 0x0F) << 8) | ReadReg(0x12));
-    calibration_.c00 = SignExtend20((static_cast<uint32_t>(ReadReg(0x13)) << 12) |
-                                    (static_cast<uint32_t>(ReadReg(0x14)) << 4) |
-                                    (ReadReg(0x15) >> 4));
-    calibration_.c10 = SignExtend20((static_cast<uint32_t>(ReadReg(0x15)) << 16) |
-                                    (static_cast<uint32_t>(ReadReg(0x16)) << 8) |
-                                    ReadReg(0x17));
+    calibration_.c1 = SignExtend12(((static_cast<uint32_t>(ReadReg(0x11)) & 0x0F) << 8) |
+                                   ReadReg(0x12));
+    calibration_.c00 =
+        SignExtend20((static_cast<uint32_t>(ReadReg(0x13)) << 12) |
+                     (static_cast<uint32_t>(ReadReg(0x14)) << 4) | (ReadReg(0x15) >> 4));
+    calibration_.c10 =
+        SignExtend20((static_cast<uint32_t>(ReadReg(0x15)) << 16) |
+                     (static_cast<uint32_t>(ReadReg(0x16)) << 8) | ReadReg(0x17));
     calibration_.c01 =
         static_cast<int16_t>((static_cast<uint32_t>(ReadReg(0x18)) << 8) | ReadReg(0x19));
     calibration_.c11 =
@@ -147,11 +148,13 @@ class SPL06 : public LibXR::Application {
         static_cast<int16_t>((static_cast<uint32_t>(ReadReg(0x20)) << 8) | ReadReg(0x21));
   }
 
-  void RateSet(uint8_t sensor, uint8_t sample_rate, uint8_t over_sample) {
+  void RateSet(uint8_t sensor, uint8_t sample_rate, uint8_t over_sample)
+  {
     uint8_t reg = 0;
     int32_t k = 524288;
 
-    switch (sample_rate) {
+    switch (sample_rate)
+    {
       case 2:
         reg |= (1u << 4);
         break;
@@ -177,7 +180,8 @@ class SPL06 : public LibXR::Application {
         break;
     }
 
-    switch (over_sample) {
+    switch (over_sample)
+    {
       case 2:
         reg |= 1u;
         k = 1572864;
@@ -210,16 +214,21 @@ class SPL06 : public LibXR::Application {
         break;
     }
 
-    if (sensor == 0) {
+    if (sensor == 0)
+    {
       kp_ = static_cast<float>(k);
       WriteReg(REG_PRS_CFG, reg);
-      if (over_sample > 8) {
+      if (over_sample > 8)
+      {
         WriteReg(REG_CFG_REG, ReadReg(REG_CFG_REG) | 0x04);
       }
-    } else {
+    }
+    else
+    {
       kt_ = static_cast<float>(k);
       WriteReg(REG_TMP_CFG, reg | 0x80);
-      if (over_sample > 8) {
+      if (over_sample > 8)
+      {
         WriteReg(REG_CFG_REG, ReadReg(REG_CFG_REG) | 0x08);
       }
     }
@@ -227,7 +236,8 @@ class SPL06 : public LibXR::Application {
 
   void StartContinuous(uint8_t mode) { WriteReg(REG_MEAS_CFG, mode + 4); }
 
-  int32_t ReadRawPressure() {
+  int32_t ReadRawPressure()
+  {
     uint8_t raw[3] = {0};
     // Align legacy ANO_PioneerPro-088 exactly: read each byte with an
     // independent SPI register transaction instead of a burst read.
@@ -238,7 +248,8 @@ class SPL06 : public LibXR::Application {
                         (static_cast<uint32_t>(raw[1]) << 8) | raw[2]);
   }
 
-  int32_t ReadRawTemperature() {
+  int32_t ReadRawTemperature()
+  {
     uint8_t raw[3] = {0};
     raw[0] = ReadReg(REG_TMP_B2 + 0);
     raw[1] = ReadReg(REG_TMP_B2 + 1);
@@ -247,13 +258,15 @@ class SPL06 : public LibXR::Application {
                         (static_cast<uint32_t>(raw[1]) << 8) | raw[2]);
   }
 
-  float CalculateTemperature(int32_t raw_temperature) const {
+  float CalculateTemperature(int32_t raw_temperature) const
+  {
     float t_sc = static_cast<float>(raw_temperature) / kt_;
     return static_cast<float>(calibration_.c0) * 0.5f +
            static_cast<float>(calibration_.c1) * t_sc;
   }
 
-  float CalculatePressure(int32_t raw_pressure, int32_t raw_temperature) const {
+  float CalculatePressure(int32_t raw_pressure, int32_t raw_temperature) const
+  {
     float t_sc = static_cast<float>(raw_temperature) / kt_;
     float p_sc = static_cast<float>(raw_pressure) / kp_;
     float qua2 = static_cast<float>(calibration_.c10) +
@@ -266,41 +279,48 @@ class SPL06 : public LibXR::Application {
            t_sc * static_cast<float>(calibration_.c01) + qua3;
   }
 
-  void Update() {
+  void Update()
+  {
     int32_t raw_temperature = ReadRawTemperature();
     int32_t raw_pressure = ReadRawPressure();
     data_.temperature_c = CalculateTemperature(raw_temperature);
     data_.pressure_pa = CalculatePressure(raw_pressure, raw_temperature);
     float alt_3 = (101400.0f - data_.pressure_pa) / 1000.0f;
-    data_.height_cm = 0.82f * alt_3 * alt_3 * alt_3 +
-                      9.0f * (101400.0f - data_.pressure_pa);
+    data_.height_cm =
+        0.82f * alt_3 * alt_3 * alt_3 + 9.0f * (101400.0f - data_.pressure_pa);
   }
 
-  static void ThreadFunc(SPL06* spl06) {
-    while (true) {
+  static void ThreadFunc(SPL06* spl06)
+  {
+    while (true)
+    {
       spl06->Update();
       spl06->topic_.Publish(spl06->data_);
       LibXR::Thread::Sleep(spl06->sample_period_ms_);
     }
   }
 
-  static int CommandFunc(SPL06* spl06, int argc, char** argv) {
-    if (argc == 1) {
+  static int CommandFunc(SPL06* spl06, int argc, char** argv)
+  {
+    if (argc == 1)
+    {
       LibXR::STDIO::Printf<"Usage:\r\n">();
       LibXR::STDIO::Printf<
-          "  show [time_ms] [interval_ms] - Print pressure, temperature and height.\r\n">();
+          "  show [time_ms] [interval_ms] - Print pressure, temperature and "
+          "height.\r\n">();
       return 0;
     }
 
-    if (argc == 4 && std::strcmp(argv[1], "show") == 0) {
+    if (argc == 4 && std::strcmp(argv[1], "show") == 0)
+    {
       int time_ms = std::atoi(argv[2]);
       int interval_ms = std::atoi(argv[3]);
       interval_ms = std::clamp(interval_ms, 10, 1000);
 
-      while (time_ms > 0) {
+      while (time_ms > 0)
+      {
         LibXR::STDIO::Printf<"SPL06: pressure=%fPa temp=%fC height=%fcm\r\n">(
-            spl06->data_.pressure_pa, spl06->data_.temperature_c,
-            spl06->data_.height_cm);
+            spl06->data_.pressure_pa, spl06->data_.temperature_c, spl06->data_.height_cm);
         LibXR::Thread::Sleep(interval_ms);
         time_ms -= interval_ms;
       }
