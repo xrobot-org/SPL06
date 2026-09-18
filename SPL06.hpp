@@ -45,15 +45,19 @@ class SPL06
     int16_t c30 = 0;
   };
 
-  SPL06(LibXR::SPI& external_spl06_spi, LibXR::RamFS& external_ramfs,
-        const char* data_topic_name, uint32_t sample_period_ms, size_t task_stack_depth)
+  SPL06(
+      LibXR::SPI& spi,
+      LibXR::RamFS& ramfs,
+      const char* data_topic_name = "spl06_data",
+      uint32_t sample_period_ms = 50,
+      size_t task_stack_depth = 1024)
       : sample_period_ms_(sample_period_ms),
         topic_(LibXR::Topic::CreateTopic<Data>(data_topic_name)),
-        spi_(std::addressof(external_spl06_spi)),
+        spi_(std::addressof(spi)),
         op_spi_(sem_spi_),
         cmd_file_(LibXR::RamFS::CreateFile("spl06", CommandFunc, this))
   {
-    external_ramfs.Add(cmd_file_);
+    ramfs.Add(cmd_file_);
 
     ASSERT(spi_->SetConfig({.clock_polarity = LibXR::SPI::ClockPolarity::HIGH,
                             .clock_phase = LibXR::SPI::ClockPhase::EDGE_2,
