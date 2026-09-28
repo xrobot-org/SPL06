@@ -1,55 +1,100 @@
 # SPL06
 
-## Static assembly source line
+XRobot Module for the Goertek SPL06 barometric pressure sensor (SPI).
 
-This source line uses explicit C++ constructor dependencies and ordered instance
-arguments. Inspect the current primary header with `xrobot_mod_parser --path .`;
-its declarations, not old manifest/config examples, define the interface.
-Historical HardwareContainer/ApplicationManager examples below apply only to the
-older dynamic source tags. Device/protocol descriptions remain relevant.
-See the XRobot [migration guide](https://github.com/xrobot-org/XRobot/blob/dev/MIGRATION.md).
-Compilation is not hardware validation; retain version-specific board evidence.
+The constructor configures the SPI (CPOL high, second edge, prescaler
+`DIV_4`), checks the product ID (`0x10`), reads the calibration coefficients,
+sets pressure to 128 Hz with 16x oversampling and temperature to 8 Hz with 8x
+oversampling, and starts continuous pressure and temperature measurement. A
+wrong product ID or a failed SPI configuration stops with `ASSERT`.
 
+The `spl06_thread` thread (`HIGH` priority) reads temperature and pressure,
+compensates them with the calibration coefficients and publishes the result
+every `sample_period_ms`. `height_cm` is an empirical estimate from the
+difference to 101400 Pa: `0.82 * (dp / 1000)^3 + 9 * dp` with
+`dp = 101400 - pressure_pa`.
 
-Goertek SPL06 SPI barometric pressure sensor module for XRobot.
+The module drives no chip-select pin. The `spi` object passed in must select
+the SPL06 itself; if the sensor shares a physical SPI bus with other devices,
+chip-select handling and bus locking belong in that object.
 
-This module initializes the SPL06 over a device-level SPI handle, loads pressure
-and temperature calibration coefficients, starts continuous conversion, samples
-pressure / temperature / estimated height in a background thread, and exposes a
-RamFS shell command for status output.
+`OnMonitor()` logs a warning when any output is NaN.
 
-The `spl06_spi` handle is expected to be prepared by the User layer. If the
-sensor shares a physical SPI bus with other devices, chip-select handling and bus
-locking should be encapsulated in that handle.
+## Published topic
 
-## Required Hardware
+`data_topic_name` (default `spl06_data`), type `SPL06::Data`:
 
-- `spl06_spi`
-- `ramfs`
+| Field | Meaning |
+| --- | --- |
+| `temperature_c` | temperature, °C |
+| `pressure_pa` | pressure, Pa |
+| `height_cm` | estimated height, cm |
 
-## Constructor Arguments
+## Shell command
 
-- `data_topic_name`: default `"spl06_data"`
-- `sample_period_ms`: default `50`
-- `task_stack_depth`: default `1024`
+The module adds the command `spl06` to `ramfs`:
 
-## Published Topics
+```sh
+spl06 show <time_ms> <interval_ms>   # print pressure, temperature and height (interval clamped to 10..1000 ms)
+```
 
-- `data_topic_name`: `SPL06::Data`, pressure in Pa, temperature in degrees C, and estimated height in cm
+## Dependencies
 
-## Shell Commands
+No other Modules; LibXR only.
 
-The module registers `spl06` in `RamFS`.
+## Constructor
 
-- `spl06` or `spl06 status`: print latest pressure, temperature, and height
+```cpp
+SPL06(LibXR::SPI& spi, LibXR::RamFS& ramfs,
+      const char* data_topic_name = "spl06_data",
+      uint32_t sample_period_ms = 50,
+      size_t task_stack_depth = 1024);
+```
 
-## XRobot Configuration Example
+Dependencies:
+
+- `spi`: SPI device handle for the SPL06 (see the chip-select note above).
+- `ramfs`: RamFS that receives the `spl06` command.
+
+Configuration:
+
+- `data_topic_name`: name of the published topic, default `spl06_data`.
+- `sample_period_ms`: sleep between two samples, ms, default 50.
+- `task_stack_depth`: stack size of the sampling thread, default 1024.
+
+## Use
+
+```sh
+xrobot module add xrobot-org/SPL06
+xrobot setup
+xrobot instance add xrobot-org/SPL06
+```
+
+`xrobot instance add` writes an instance to `User/xrobot.yaml` with empty
+dependencies and the source defaults; set the dependencies to the names of
+objects the BSP registers with `XR_REGISTER`:
 
 ```yaml
-- id: barometer
-  name: SPL06
-  constructor_args:
-    data_topic_name: "spl06_data"
-    sample_period_ms: 50
-    task_stack_depth: 1024
+modules:
+  - module: xrobot-org/SPL06
+    id: spl06_0
+    args:
+      - spi: spl06_spi
+      - ramfs: ramfs
+      - data_topic_name: '"spl06_data"'
+      - sample_period_ms: '50'
+      - task_stack_depth: '1024'
 ```
+
+BSP side:
+
+```cpp
+XR_REGISTER(spl06_spi, LibXR::SPI);
+XR_REGISTER(ramfs, LibXR::RamFS);
+```
+
+Run `xrobot setup` again to generate `User/xrobot_main.hpp`.
+
+`xrobot module show .` in this repository, or
+`xrobot module show Modules/xrobot-org/SPL06` in a BSP, prints the current
+constructor.
