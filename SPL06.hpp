@@ -2,7 +2,7 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: XRobot Module for Goertek SPL06 barometric pressure sensor
+module_description: Goertek SPL06 气压传感器驱动模块 / Driver module for the Goertek SPL06 barometric pressure sensor
 depends: []
 === END MANIFEST === */
 // clang-format on
@@ -243,8 +243,7 @@ class SPL06
   int32_t ReadRawPressure()
   {
     uint8_t raw[3] = {0};
-    // Align legacy ANO_PioneerPro-088 exactly: read each byte with an
-    // independent SPI register transaction instead of a burst read.
+    // Each byte is read with its own SPI register transaction.
     raw[0] = ReadReg(REG_PSR_B2 + 0);
     raw[1] = ReadReg(REG_PSR_B2 + 1);
     raw[2] = ReadReg(REG_PSR_B2 + 2);
