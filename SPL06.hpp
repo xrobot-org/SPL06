@@ -22,29 +22,58 @@ depends: []
 #include "thread.hpp"
 #include "timebase.hpp"
 
+/**
+ * @brief SPL06 气压传感器驱动，通过 SPI 采样并发布温度、气压和估算高度。
+ *        Driver for the SPL06 barometric pressure sensor; samples it over SPI and
+ *        publishes the temperature, pressure and estimated height.
+ */
 class SPL06
 {
  public:
+  /**
+   * @brief 补偿后的测量结果，由数据 Topic 发布。
+   *        Compensated measurement published on the data Topic.
+   */
   struct Data
   {
-    float temperature_c = 0.0f;
-    float pressure_pa = 0.0f;
-    float height_cm = 0.0f;
+    float temperature_c = 0.0f;  ///< 温度，℃ Temperature, °C
+    float pressure_pa = 0.0f;    ///< 气压，Pa Pressure, Pa
+    float height_cm = 0.0f;      ///< 估算高度，cm Estimated height, cm
   };
 
+  /**
+   * @brief 从芯片读出的校准系数。
+   *        Calibration coefficients read from the chip.
+   */
   struct Calibration
   {
-    int16_t c0 = 0;
-    int16_t c1 = 0;
-    int32_t c00 = 0;
-    int32_t c10 = 0;
-    int16_t c01 = 0;
-    int16_t c11 = 0;
-    int16_t c20 = 0;
-    int16_t c21 = 0;
-    int16_t c30 = 0;
+    int16_t c0 = 0;   ///< 温度系数 c0 Temperature coefficient c0
+    int16_t c1 = 0;   ///< 温度系数 c1 Temperature coefficient c1
+    int32_t c00 = 0;  ///< 气压系数 c00 Pressure coefficient c00
+    int32_t c10 = 0;  ///< 气压系数 c10 Pressure coefficient c10
+    int16_t c01 = 0;  ///< 气压系数 c01 Pressure coefficient c01
+    int16_t c11 = 0;  ///< 气压系数 c11 Pressure coefficient c11
+    int16_t c20 = 0;  ///< 气压系数 c20 Pressure coefficient c20
+    int16_t c21 = 0;  ///< 气压系数 c21 Pressure coefficient c21
+    int16_t c30 = 0;  ///< 气压系数 c30 Pressure coefficient c30
   };
 
+  /**
+   * @brief 构造 SPL06：配置 SPI，检查产品 ID，读取校准系数，启动连续测量并创建采样线程。
+   *        Construct SPL06: configure the SPI, check the product ID, read the calibration
+   *        coefficients, start continuous measurement and create the sampling thread.
+   *
+   * @param spi 选中 SPL06 的 SPI 设备句柄。
+   *            SPI device handle that selects the SPL06.
+   * @param ramfs 接收 `spl06` 命令的 RamFS。
+   *              RamFS that receives the `spl06` command.
+   * @param data_topic_name 数据 Topic 名称。
+   *                        Name of the data Topic.
+   * @param sample_period_ms 两次采样之间的休眠时间，单位 ms。
+   *                         Sleep between two samples, in ms.
+   * @param task_stack_depth 采样线程栈深。
+   *                         Stack depth of the sampling thread.
+   */
   SPL06(
       LibXR::SPI& spi,
       LibXR::RamFS& ramfs,
@@ -78,6 +107,10 @@ class SPL06
                    LibXR::Thread::Priority::HIGH);
   }
 
+  /**
+   * @brief 监控回调：任一输出为 NaN 时输出告警。
+   *        Monitor callback: log a warning when any output is NaN.
+   */
   void OnMonitor()
   {
     if (std::isnan(data_.pressure_pa) || std::isnan(data_.temperature_c) ||
