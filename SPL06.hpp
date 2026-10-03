@@ -88,10 +88,11 @@ class SPL06
   {
     ramfs.Add(cmd_file_);
 
-    ASSERT(spi_->SetConfig({.clock_polarity = LibXR::SPI::ClockPolarity::HIGH,
-                            .clock_phase = LibXR::SPI::ClockPhase::EDGE_2,
-                            .prescaler = LibXR::SPI::Prescaler::DIV_4}) ==
-           LibXR::ErrorCode::OK);
+    [[maybe_unused]] const auto ans =
+        spi_->SetConfig({.clock_polarity = LibXR::SPI::ClockPolarity::HIGH,
+                         .clock_phase = LibXR::SPI::ClockPhase::EDGE_2,
+                         .prescaler = LibXR::SPI::Prescaler::DIV_4});
+    ASSERT(ans == LibXR::ErrorCode::OK);
 
     chip_id_ = ReadReg(REG_PRODUCT_ID);
     ASSERT(chip_id_ == 0x10);
