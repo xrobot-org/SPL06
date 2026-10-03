@@ -80,7 +80,7 @@ An instance written by `xrobot instance add xrobot-org/SPL06`, with `spi` and `r
 ```yaml
 modules:
   - module: xrobot-org/SPL06
-    id: spl06
+    id: spl06_0
     args:
       - spi: spl06_spi
       - ramfs: ramfs
