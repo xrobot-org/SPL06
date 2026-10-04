@@ -2,7 +2,7 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: Goertek SPL06 气压传感器驱动模块 / Driver module for the Goertek SPL06 barometric pressure sensor
+module_description: Goertek SPL06 气压传感器驱动模块 / Driver Module for the Goertek SPL06 barometric pressure sensor
 depends: []
 === END MANIFEST === */
 // clang-format on
